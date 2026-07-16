@@ -114,6 +114,6 @@ app.get("/navi/reaction", (req, res) => {
   res.json(reaction);
 });
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log("NAVI server running");
+app.listen(process.env.PORT, () => {
+  console.log("NAVI server running on port " + process.env.PORT);
 });
