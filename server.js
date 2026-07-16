@@ -4,15 +4,12 @@ import OpenAI from "openai";
 const app = express();
 app.use(express.json());
 
-app.get("/health", (req, res) => {
-  res.json({ ok: true, service: "navi" });
-});
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
 const DEVICE_SECRET = process.env.DEVICE_SECRET;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 const activeChats = new Map();
 let pendingReaction = { mood: "normal", message: "" };
@@ -41,6 +38,11 @@ function cleanPrompt(text) {
 }
 
 async function sendTelegram(chatId, text) {
+  if (!TELEGRAM_TOKEN) {
+    console.error("Missing TELEGRAM_BOT_TOKEN");
+    return;
+  }
+
   await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -48,12 +50,23 @@ async function sendTelegram(chatId, text) {
   });
 }
 
+app.get("/", (req, res) => {
+  res.json({ ok: true, service: "navi", route: "/" });
+});
+
 app.get("/health", (req, res) => {
-  res.json({ ok: true, service: "navi" });
+  res.json({
+    ok: true,
+    service: "navi",
+    hasOpenAI: Boolean(OPENAI_API_KEY),
+    hasTelegram: Boolean(TELEGRAM_TOKEN),
+    hasTelegramSecret: Boolean(TELEGRAM_SECRET),
+    hasDeviceSecret: Boolean(DEVICE_SECRET)
+  });
 });
 
 app.post("/telegram", async (req, res) => {
-  if (req.headers["x-telegram-bot-api-secret-token"] !== TELEGRAM_SECRET) {
+  if (!TELEGRAM_SECRET || req.headers["x-telegram-bot-api-secret-token"] !== TELEGRAM_SECRET) {
     return res.sendStatus(403);
   }
 
@@ -86,21 +99,28 @@ app.post("/telegram", async (req, res) => {
 
   pendingReaction = { mood: moodFor(text), message: "Escuchando" };
 
-  const response = await openai.responses.create({
-    model: "gpt-4.1-mini",
-    input: [
-      {
-        role: "system",
-        content: "Eres NAVI, un robot pequeño, cálido, curioso y divertido. Responde en español con 1 a 3 frases."
-      },
-      {
-        role: "user",
-        content: cleanPrompt(text)
-      }
-    ]
-  });
+  let answer = "Te escucho. Estoy aquí contigo.";
 
-  const answer = response.output_text || "Estoy aquí contigo.";
+  if (openai) {
+    const response = await openai.responses.create({
+      model: "gpt-4.1-mini",
+      input: [
+        {
+          role: "system",
+          content: "Eres NAVI, un robot pequeño, cálido, curioso y divertido. Responde en español con 1 a 3 frases."
+        },
+        {
+          role: "user",
+          content: cleanPrompt(text)
+        }
+      ]
+    });
+
+    answer = response.output_text || answer;
+  } else {
+    answer = "Todavía no tengo conectada mi API de IA, pero ya estoy escuchando.";
+  }
+
   pendingReaction = {
     mood: moodFor(text + " " + answer),
     message: answer.slice(0, 48)
@@ -110,7 +130,7 @@ app.post("/telegram", async (req, res) => {
 });
 
 app.get("/navi/reaction", (req, res) => {
-  if (req.query.secret !== DEVICE_SECRET) return res.sendStatus(403);
+  if (!DEVICE_SECRET || req.query.secret !== DEVICE_SECRET) return res.sendStatus(403);
 
   const reaction = pendingReaction;
   pendingReaction = { mood: "normal", message: "" };
@@ -118,6 +138,8 @@ app.get("/navi/reaction", (req, res) => {
   res.json(reaction);
 });
 
-app.listen(process.env.PORT, () => {
-  console.log("NAVI server running on port " + process.env.PORT);
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`NAVI server listening on 0.0.0.0:${PORT}`);
 });
